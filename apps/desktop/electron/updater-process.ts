@@ -27,14 +27,16 @@ import { hiddenWindowsChildOptions } from './windows-child-options'
 export function resolveInstallationLauncher(
   updateRoot: string,
   isWindows: boolean = process.platform === 'win32',
-  hermesHome: string = process.env.HERMES_HOME ?? ''
+  hermesHome: string = process.env.HERMES_HOME ?? '',
+  excluded: ReadonlySet<string> = new Set()
 ): string | null {
   const names: string[] = isWindows ? ['hermes.exe', 'hermes.cmd'] : ['hermes']
+  const allowed = (candidate: string): boolean => !excluded.has(path.resolve(candidate).toLowerCase())
 
   for (const name of names) {
     const candidate: string = path.join(updateRoot, '.hermes', 'bin', name)
 
-    if (stagedFileExists(candidate)) {
+    if (allowed(candidate) && stagedFileExists(candidate)) {
       return candidate
     }
   }
@@ -45,7 +47,7 @@ export function resolveInstallationLauncher(
     const extraDirs: string[] = isWindows ? [path.join(path.dirname(updateRoot), 'bin')] : []
 
     for (const candidate of userBinLaunchers(isWindows, hermesHome, extraDirs)) {
-      if (launcherTargetsInstallation(candidate, updateRoot)) {
+      if (allowed(candidate) && launcherTargetsInstallation(candidate, updateRoot)) {
         return candidate
       }
     }
@@ -55,7 +57,7 @@ export function resolveInstallationLauncher(
   if (!existsSync(path.join(updateRoot, 'pm'))) {
     const legacy: string = path.join(updateRoot, 'venv', isWindows ? 'Scripts' : 'bin', names[0])
 
-    if (stagedFileExists(legacy)) {
+    if (allowed(legacy) && stagedFileExists(legacy)) {
       return legacy
     }
   }

@@ -18,6 +18,79 @@ interface Fixture {
   selected: string
 }
 
+test.skipIf(process.platform !== 'win32')(
+  'an unusable native launcher falls back inside the same source installation',
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-launcher-recovery-'))
+    const bin = path.join(root, '.hermes', 'bin')
+    const launcher = path.join(bin, 'hermes.cmd')
+    const args = serveBackendArgs('profile with spaces')
+
+    try {
+      fs.mkdirSync(bin, { recursive: true })
+      fs.mkdirSync(path.join(root, 'hermes_cli'))
+      fs.writeFileSync(path.join(root, 'hermes_cli', 'main.py'), '')
+      fs.writeFileSync(path.join(bin, 'hermes.exe'), 'not an executable')
+      fs.writeFileSync(launcher, `@echo off\r\necho Install directory: ${root}\r\nexit /b 0\r\n`)
+      const backend = await resolveSourceInstallationBackend(root, args)
+      assert.ok(backend, 'a broken native launcher must not hide a working same-install command')
+      assert.equal(backend.command, `"${launcher}"`)
+      assert.deepEqual(backend.args, args)
+      assert.equal(backend.root, root)
+      assert.equal(backend.bootstrap, false)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
+test.skipIf(process.platform !== 'win32')(
+  'launcher recovery preserves its install and refuses custom or bundled deployment switches',
+  async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-launcher-scope-'))
+    const bin = path.join(root, '.hermes', 'bin')
+    const native = path.join(bin, 'hermes.exe')
+    const command = path.join(bin, 'hermes.cmd')
+
+    const original = {
+      kind: 'command',
+      command: native,
+      args: serveBackendArgs('fw'),
+      env: { ...process.env, TEST_SCOPE: 'fw' },
+      shell: false,
+      local: 'installed',
+      bootstrap: false
+    }
+
+    try {
+      fs.mkdirSync(bin, { recursive: true })
+      fs.mkdirSync(path.join(root, 'hermes_cli'))
+      fs.writeFileSync(path.join(root, 'hermes_cli', 'main.py'), '')
+      fs.writeFileSync(command, `@echo off\r\necho Install directory: ${root}\r\nexit /b 0\r\n`)
+      const { resolveWindowsLauncherReplacement } = await import('./source-backend')
+
+      const replacement = await resolveWindowsLauncherReplacement(original, root, path.dirname(root))
+      assert.ok(replacement)
+      assert.equal(replacement.command, `"${command}"`)
+      assert.deepEqual(replacement.args, original.args)
+      assert.equal(replacement.env.TEST_SCOPE, 'fw')
+
+      for (const backend of [
+        { ...original, command: path.join(root, 'custom', 'hermes.exe') },
+        { ...original, local: 'bundled' },
+        { ...original, kind: 'python', command: process.execPath }
+      ]) {
+        assert.equal(await resolveWindowsLauncherReplacement(backend, root, path.dirname(root)), null)
+      }
+
+      fs.writeFileSync(command, '@echo off\r\necho Install directory: C:\\unrelated-install\r\nexit /b 0\r\n')
+      assert.equal(await resolveWindowsLauncherReplacement(original, root, path.dirname(root)), null)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
 async function stop(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return
